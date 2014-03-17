@@ -174,12 +174,23 @@ func (this *CommandProc) DoPush() {
 }
 
 func (this *CommandProc) DoPull() {
+	url := this.args["--url"].(string)
+	archive, err := NewArchive(url)
+	if err != nil {
+		fmt.Printf("Problem accessing archive %q: %s\n", url, err)
+		os.Exit(1)
+	}
+
 	index := LoadIndex()
 
 	queue := NewParallelOrderedQueue(10, func(item interface{}) interface{} {
 		work := item.(*FileWork)
 		if !work.file.Verify() {
 			fmt.Printf("Pulling: %s\n", work.file.path)
+			work.err = archive.Pull(work.file)
+			if work.err != nil {
+				return work
+			}
 		}
 		work.err = work.file.MkLink()
 		return work

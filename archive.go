@@ -82,8 +82,8 @@ func (this *Archive) Push(file *File) error {
 
 	path := fmt.Sprintf("%s/%s", this.root, file.hash.EncodeHex())
 	options := s3.Options{
-		SSE: true,
-		// ContentMD5: file.hash.EncodeBase64(),
+		SSE:        true,
+		ContentMD5: file.hash.EncodeBase64(),
 	}
 
 	return this.bucket.PutReader(path, reader, fi.Size(), "application/octet-stream",
