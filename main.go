@@ -175,6 +175,8 @@ func (this *CommandProc) DoPush() {
 }
 
 func (this *CommandProc) DoPull() {
+	os.Mkdir(k_store, 0775)
+
 	manifest := LoadManifest()
 
 	url := manifest.Settings["url"]
