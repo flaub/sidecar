@@ -14,16 +14,16 @@ import (
 
 var USAGE = `
 Usage:
-  sidecar init
+  sidecar init --url=<url>
   sidecar ls
   sidecar add <path>...
   sidecar release <path>...
   sidecar rm <path>...
   sidecar mv <from>... <to>
   sidecar cp <from>... <to>
-  sidecar status --url=<url>
-  sidecar push --url=<url>
-  sidecar pull --url=<url>
+  sidecar status
+  sidecar push
+  sidecar pull
 
 options:
    -h, --help       Show this screen.
@@ -31,8 +31,8 @@ options:
 `
 
 const (
-	k_index = "sidecar.json"
-	k_store = ".sidecar"
+	k_manifest = "sidecar.json"
+	k_store    = ".sidecar"
 )
 
 func ComputeHash(hasher hash.Hash, path string) (*Hash, error) {
@@ -70,23 +70,24 @@ func (this *CommandProc) dispatch() {
 }
 
 func (this *CommandProc) DoInit() {
-	index := NewIndex()
-	err := index.Load()
+	url := this.args["--url"].(string)
+	manifest := NewManifest(url)
+	err := manifest.Load()
 	if err == nil {
 		fmt.Println("sidecar is already initialized.")
 		return
 	}
 	os.Mkdir(k_store, 0775)
-	err = index.Save()
+	err = manifest.Save()
 	if err != nil {
-		fmt.Println("Problem saving index: %v", err)
+		fmt.Println("Problem saving %q: %v", k_manifest, err)
 		os.Exit(1)
 	}
 }
 
 func (this *CommandProc) DoLs() {
-	index := LoadIndex()
-	for _, key := range index.SortedKeys() {
+	manifest := LoadManifest()
+	for _, key := range manifest.Index.SortedKeys() {
 		fmt.Println(key)
 	}
 }
@@ -97,14 +98,14 @@ type StatusWork struct {
 }
 
 func (this *CommandProc) DoStatus() {
-	url := this.args["--url"].(string)
+	manifest := LoadManifest()
+
+	url := manifest.Settings["url"]
 	archive, err := NewArchive(url)
 	if err != nil {
 		fmt.Printf("Problem accessing archive %q: %s\n", url, err)
 		os.Exit(1)
 	}
-
-	index := LoadIndex()
 
 	queue := NewParallelOrderedQueue(10, func(item interface{}) interface{} {
 		work := item.(*StatusWork)
@@ -120,8 +121,8 @@ func (this *CommandProc) DoStatus() {
 	})
 
 	go func() {
-		for _, path := range index.SortedKeys() {
-			file := NewFile(path, index[path])
+		for _, path := range manifest.Index.SortedKeys() {
+			file := NewFile(path, manifest.Index[path])
 			queue.Add(&StatusWork{file, ""})
 		}
 		queue.End()
@@ -139,14 +140,14 @@ type FileWork struct {
 }
 
 func (this *CommandProc) DoPush() {
-	url := this.args["--url"].(string)
+	manifest := LoadManifest()
+
+	url := manifest.Settings["url"]
 	archive, err := NewArchive(url)
 	if err != nil {
 		fmt.Printf("Problem accessing archive %q: %s\n", url, err)
 		os.Exit(1)
 	}
-
-	index := LoadIndex()
 
 	queue := NewParallelOrderedQueue(10, func(item interface{}) interface{} {
 		work := item.(*FileWork)
@@ -156,8 +157,8 @@ func (this *CommandProc) DoPush() {
 	})
 
 	go func() {
-		for _, path := range index.SortedKeys() {
-			file := NewFile(path, index[path])
+		for _, path := range manifest.Index.SortedKeys() {
+			file := NewFile(path, manifest.Index[path])
 			queue.Add(&FileWork{file, nil})
 		}
 		queue.End()
@@ -174,14 +175,14 @@ func (this *CommandProc) DoPush() {
 }
 
 func (this *CommandProc) DoPull() {
-	url := this.args["--url"].(string)
+	manifest := LoadManifest()
+
+	url := manifest.Settings["url"]
 	archive, err := NewArchive(url)
 	if err != nil {
 		fmt.Printf("Problem accessing archive %q: %s\n", url, err)
 		os.Exit(1)
 	}
-
-	index := LoadIndex()
 
 	queue := NewParallelOrderedQueue(10, func(item interface{}) interface{} {
 		work := item.(*FileWork)
@@ -197,8 +198,8 @@ func (this *CommandProc) DoPull() {
 	})
 
 	go func() {
-		for _, path := range index.SortedKeys() {
-			file := NewFile(path, index[path])
+		for _, path := range manifest.Index.SortedKeys() {
+			file := NewFile(path, manifest.Index[path])
 			queue.Add(&FileWork{file, nil})
 		}
 		queue.End()
@@ -215,7 +216,7 @@ func (this *CommandProc) DoPull() {
 }
 
 func (this *CommandProc) DoAdd() {
-	index := LoadIndex()
+	manifest := LoadManifest()
 
 	for _, path := range this.args["<path>"].([]string) {
 		fi, err := os.Lstat(path)
@@ -224,7 +225,7 @@ func (this *CommandProc) DoAdd() {
 			continue
 		}
 		if err == nil && fi.Mode()&os.ModeSymlink != 0 {
-			if _, ok := index[path]; ok {
+			if _, ok := manifest.Index[path]; ok {
 				fmt.Printf("Already in the store, ignoring: %q\n", path)
 			} else {
 				fmt.Printf("Path is a symbolic link, ignoring: %q\n", path)
@@ -238,9 +239,9 @@ func (this *CommandProc) DoAdd() {
 			continue
 		}
 
-		index[path] = hash.EncodeHex()
+		manifest.Index[path] = hash.EncodeHex()
 
-		file := NewFile(path, index[path])
+		file := NewFile(path, manifest.Index[path])
 		err = file.Add()
 		if err != nil {
 			fmt.Printf("Problem adding %q: %s\n", path, err)
@@ -249,9 +250,9 @@ func (this *CommandProc) DoAdd() {
 		}
 	}
 
-	err := index.Save()
+	err := manifest.Save()
 	if err != nil {
-		fmt.Printf("Problem saving index: %s\n", err)
+		fmt.Printf("Problem saving %q: %s\n", k_manifest, err)
 		os.Exit(1)
 	}
 }
